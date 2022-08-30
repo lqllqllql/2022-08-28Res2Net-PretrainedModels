@@ -20,9 +20,6 @@ model_urls = {
 
 }
 
-
-
-
 class Bottle2neck(nn.Module):
     """
     RexNeXt bottleneck type C
@@ -32,23 +29,26 @@ class Bottle2neck(nn.Module):
     def __init__(self, inplanes, planes, stride=1, dilation=1, baseWidth=28, scale = 4):
         """ Constructor
         Args:
-            inplanes: input channel dimensionality
-            planes: output channel dimensionality
-            stride: conv stride. Replaces pooling layer.
-            downsample: None when stride = 1
-            baseWidth: basic width of conv3x3
-            scale: number of scale.
-            type: 'normal': normal set. 'stage': frist blokc of a new stage.
+            inplanes: input channel dimensionality 输入通道维度
+            planes: output channel dimensionality 输出通道维度
+            stride: conv stride. Replaces pooling layer. 卷积核步幅
+            downsample: None when stride = 1  下采样
+            baseWidth: basic width of conv3x3  
+            scale: number of scale.            分组卷积的组数
+            type: 'normal': normal set. 'stage': frist blokc of a new stage.  ---stage：代表分组的第一块
         """
         super(Bottle2neck, self).__init__()
+        # 分出来的X1不进行3*3卷积处理
         if stride != 1:
             stype = 'stage'
         else:
             stype = 'normal'
-        width = int(math.floor(planes * (baseWidth/128.0)))
-        self.conv1 = nn.Conv2d(inplanes, width*scale, kernel_size=1, bias=False)
+        # math.floor返回下舍整数；
+        width = int(math.floor(planes * (baseWidth/128.0))) # 一个conv3*3的通道数
+        self.conv1 = nn.Conv2d(inplanes, width*scale, kernel_size=1, bias=False) # 1*1卷积核
         self.bn1 = BatchNorm(width*scale)
         
+        # 进行分组卷积
         if scale == 1:
           self.nums = 1
         else:
@@ -59,14 +59,16 @@ class Bottle2neck(nn.Module):
         bns = []
         for i in range(self.nums):
           convs.append(nn.Conv2d(width, width, kernel_size=3, stride = stride, 
-                        padding=dilation, dilation=dilation, bias=False))
+                        padding=dilation, dilation=dilation, bias=False)) # padding=dilation不考虑边界
           bns.append(BatchNorm(width))
+        
+        # 将网络连接起来
         self.convs = nn.ModuleList(convs)
         self.bns = nn.ModuleList(bns)
-
+        # 分组卷积后的特征图进行拼接后，再输入1*1卷积中，最后输出
         self.conv3 = nn.Conv2d(width*scale, planes, kernel_size=1, bias=False)
         self.bn3 = BatchNorm(planes)
-
+        
         self.relu = nn.ReLU(inplace=True)
         self.stype = stype
         self.scale = scale
@@ -79,7 +81,7 @@ class Bottle2neck(nn.Module):
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
-
+        # 开始分组卷积，将张量out分割成width块（dim=1）
         spx = torch.split(out, self.width, 1)
         for i in range(self.nums):
           if i==0 or self.stype=='stage':
@@ -91,7 +93,8 @@ class Bottle2neck(nn.Module):
           if i==0:
             out = sp
           else:
-            out = torch.cat((out, sp), 1)
+            out = torch.cat((out, sp), 1) # 拼接 # 组内的残差连接
+        
         if self.scale != 1 and self.stype=='normal':
           out = torch.cat((out, spx[self.nums]),1)
         elif self.scale != 1 and self.stype=='stage':
@@ -100,7 +103,7 @@ class Bottle2neck(nn.Module):
         out = self.conv3(out)
         out = self.bn3(out)
 
-        out += residual
+        out += residual # 常规的残差连接
         out = self.relu(out)
 
         return out
@@ -111,7 +114,7 @@ class Bottle2neckX(nn.Module):
     RexNeXt bottleneck type C
     """
     expansion = 2
-    cardinality = 8
+    cardinality = 8  # 卷积核的组数
     def __init__(self, inplanes, planes, stride=1, dilation=1, scale = 4):
         """ Constructor
         Args:
@@ -129,7 +132,7 @@ class Bottle2neckX(nn.Module):
         else:
             stype = 'normal'
         cardinality =  Bottle2neckX.cardinality
-        width = bottle_planes = planes * cardinality // 32
+        width = bottle_planes = planes * cardinality // 32 #卷积核的通道数
         self.conv1 = nn.Conv2d(inplanes, width*scale, kernel_size=1, bias=False)
         self.bn1 = BatchNorm(width*scale)
         
@@ -188,7 +191,7 @@ class Bottle2neckX(nn.Module):
         out = self.relu(out)
 
         return out
-
+# 展示了两种不同的构建分组卷积块的形式
 
 
 class Root(nn.Module):
